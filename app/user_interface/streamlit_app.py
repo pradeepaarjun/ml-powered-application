@@ -42,12 +42,12 @@ def show_upload_csv_page():
 def predict_price(airline, class_, duration, days_left):
     data = {
         "airline": airline,
-        "class_": class_,
+        "Class": class_,
         "duration": duration,
         "days_left": days_left
     }
 
-    response = requests.post("http://127.0.0.1/flights/predict-price/", json=data)
+    response = requests.post("http://127.0.0.1:8000/flights/predict-price/", json=data)
 
     if response.status_code == 200:
         predicted_price = response.json()["predicted_price"]
@@ -56,15 +56,20 @@ def predict_price(airline, class_, duration, days_left):
         st.error("Failed to get prediction. Please check your inputs and try again.")
 
 def predict_prices_from_csv(df):
-    response = requests.post("http://127.0.0.1/flights/predict-price/csv", json=df.to_dict(orient="records"))
-
-    if response.status_code == 200:
-        predicted_prices = response.json()["predicted_prices"]
-        df["predicted_price"] = predicted_prices
-        st.write("### Predicted Prices")
-        st.write(df)
-    else:
-        st.error("Failed to get predictions. Please check your CSV data and try again.")
+    try:
+        csv_data = df.to_csv(index=False)
+        response = requests.post("http://127.0.0.1:8000/flights/predict-price/csv/", files={"csv_file": ("data.csv", csv_data)})
+        if response.status_code == 200:
+            predicted_prices = response.json()["predicted_prices"]
+            df["predicted_price"] = predicted_prices
+            st.write("### Predicted Prices")
+            st.write(df)
+        else:
+            st.error("Failed to get predictions. Please check your CSV data and try again.")
+            st.write(f"Response status code: {response.status_code}")
+            st.write(f"Response content: {response.content}")
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     main()

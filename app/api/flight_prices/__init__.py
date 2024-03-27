@@ -1,6 +1,6 @@
 COLUMNS_ID = ['Unnamed: 0']
-COLUMNS_TO_ENCODE = ['airline', 'class']
-CATEGORICAL_COLUMNS = ['airline', 'class']
+COLUMNS_TO_ENCODE = ['airline', 'Class']
+CATEGORICAL_COLUMNS = ['airline', 'Class']
 CONTINUOUS_COLUMNS = ['duration', 'days_left']
 FEATURE_COLUMNS = CATEGORICAL_COLUMNS + CONTINUOUS_COLUMNS
 TARGET_VARIABLE = ['price']
