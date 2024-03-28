@@ -20,7 +20,7 @@ def main():
 def show_manual_input_page():
     st.write("## Enter Flight Details Manually")
     airline = st.selectbox("Airline",["SpiceJet", "AirAsia", "Vistara", "GO_FIRST", "Indigo", "Air_India"])
-    class_ = st.selectbox("Class", ["Economy", "Business", "First"])
+    class_ = st.selectbox("Class", ["Economy", "Business"])
     duration = st.number_input("Duration (hours)")
     days_left = st.number_input("Days Left to Departure")
 
