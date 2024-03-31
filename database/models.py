@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, Float, String
+from sqlalchemy import Column, Integer, Float, String, DateTime
 from .base import Base
+from datetime import datetime
 
 
 class Prediction(Base):
@@ -11,3 +12,5 @@ class Prediction(Base):
     duration = Column(Float)
     days_left = Column(Integer)
     predicted_price = Column(Float)
+    prediction_date = Column(DateTime, default=datetime.now)
+    prediction_source = Column(String)

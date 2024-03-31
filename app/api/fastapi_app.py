@@ -4,7 +4,8 @@ import pandas as pd
 import joblib
 import uvicorn
 import numpy as np
-from database.crud import save_prediction
+from datetime import datetime
+from database.crud import save_prediction, get_past_predictions
 from database.base import Base
 from fastapi import FastAPI, HTTPException, File, UploadFile, Depends
 from pydantic import BaseModel
@@ -22,6 +23,19 @@ class FlightFeatures(BaseModel):
     Class : str 
     duration: float
     days_left: int
+    prediction_source: str
+
+class PastPredictionsRequest(BaseModel):
+    start_date: datetime
+    end_date: datetime
+    prediction_source: str
+
+class PredictionRequest(BaseModel):
+    airline: str
+    class_: str
+    duration: float
+    days_left: int
+    predicted_price: float
 
 def get_db():
     db = SessionLocal()
@@ -41,7 +55,7 @@ async def predict_price(flight_features: FlightFeatures, db: Session = Depends(g
         to_predict = np.hstack((encoded_features,duration, days_left))
         predicted_price = model.predict([to_predict])[0]
         predicted_price_json = float(predicted_price)
-        save_prediction(db, flight_features.airline, flight_features.Class, flight_features.duration, flight_features.days_left, predicted_price_json)
+        save_prediction(db, flight_features.airline, flight_features.Class, flight_features.duration, flight_features.days_left, predicted_price_json,flight_features.prediction_source)
         return {"predicted_price": predicted_price_json}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -56,10 +70,19 @@ async def predict_prices_from_csv(csv_file: UploadFile = File(...), db: Session 
         predicted_prices = model.predict(all_features)
         df['predicted_price'] = predicted_prices
         for _, row in df.iterrows():
-            save_prediction(db, airline=row['airline'], class_=row['Class'], duration=row['duration'], days_left=row['days_left'], predicted_price=row['predicted_price'])
+            save_prediction(db, airline=row['airline'], class_=row['Class'], duration=row['duration'], days_left=row['days_left'], predicted_price=row['predicted_price'], source="webapp")
         return {"predicted_prices": predicted_prices.tolist()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+
+@app.post("/past-predictions/")
+async def retrieve_past_predictions(request_data: PastPredictionsRequest, db: Session = Depends(get_db)):
+    try:
+        past_predictions = get_past_predictions(db, request_data.start_date, request_data.end_date, request_data.prediction_source)
+        return {"past_predictions": past_predictions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == '__main__':
     uvicorn.run(app, host='127.0.0.1', port=8000,log_level="info")

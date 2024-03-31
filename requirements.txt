@@ -9,3 +9,4 @@ fastapi==0.110.0
 python-multipart==0.0.9
 streamlit==1.32.2
 SQLAlchemy==2.0.29
+apache-airflow==2.8.2 --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.8.2/constraints-3.10.txt
