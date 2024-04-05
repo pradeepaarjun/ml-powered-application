@@ -1,4 +1,5 @@
 from datetime import datetime
+import io
 import streamlit as st
 import pandas as pd
 import requests
@@ -60,19 +61,29 @@ def predict_price(airline, class_, duration, days_left):
         "days_left": days_left,
         "prediction_source": "webapp"
     }
-
-    response = requests.post("http://127.0.0.1:8000/flights/predict-price/", json=data)
+    response = requests.post("http://127.0.0.1:8000/flights/predict-price/", json = [data])
 
     if response.status_code == 200:
-        predicted_price = response.json()["predicted_price"]
-        st.write(f"Predicted Price: {predicted_price}")
+        predicted_prices = response.json()["predicted_prices"]
+        if predicted_prices:
+            st.write(f"Predicted Price: { predicted_prices[0][0]}")
     else:
         st.error("Failed to get prediction. Please check your inputs and try again.")
+        st.write(response.text)
 
-def predict_prices_from_csv(df):
+def predict_prices_from_csv(df: pd.DataFrame):
     try:
-        csv_data = df.to_csv(index=False)
-        response = requests.post("http://127.0.0.1:8000/flights/predict-price/csv/", files={"csv_file": ("data.csv", csv_data)})
+        input_data_list = []
+        for index, row in df.iterrows():
+            flight_features = {
+                "airline": row['airline'],
+                "Class": row['Class'],
+                "duration": row['duration'],
+                "days_left": row['days_left'],
+                "prediction_source": "webapp"
+            }
+            input_data_list.append(flight_features)
+        response = requests.post("http://127.0.0.1:8000/flights/predict-price/", json=input_data_list)
         if response.status_code == 200:
             predicted_prices = response.json()["predicted_prices"]
             df["predicted_price"] = predicted_prices
@@ -80,8 +91,10 @@ def predict_prices_from_csv(df):
             st.write(df)
         else:
             st.error("Failed to get predictions. Please check your CSV data and try again.")
+            st.write(input_data_list)
     except Exception as e:
         st.error(f"An error occurred: {e}")
+
 
 def retrieve_past_predictions(start_date, end_date, prediction_source):    
     start_date_str = start_date.strftime('%Y-%m-%d')

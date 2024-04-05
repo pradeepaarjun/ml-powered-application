@@ -1,4 +1,5 @@
 import io, sys, os
+from typing import List
 sys.path.append('C:/Pradeepa/SEMESTER2_EPITA/Data Science in production/ml-powered-application')
 import pandas as pd
 import joblib
@@ -7,7 +8,7 @@ import numpy as np
 from datetime import datetime
 from database.crud import save_prediction, get_past_predictions
 from database.base import Base
-from fastapi import FastAPI, HTTPException, File, UploadFile, Depends
+from fastapi import FastAPI, HTTPException,Depends
 from pydantic import BaseModel
 from database.crud import engine, SessionLocal
 from sqlalchemy.orm import Session
@@ -44,37 +45,20 @@ def get_db():
     finally:
         db.close()
         
+
 @app.post("/flights/predict-price/")
-async def predict_price(flight_features: FlightFeatures, db: Session = Depends(get_db)):
+async def predict_price(flight_features: List[dict], db: Session = Depends(get_db)):
     try:
-        airline = flight_features.airline
-        Class = flight_features.Class
-        duration = flight_features.duration
-        days_left = flight_features.days_left
-        encoded_features = encoder.transform([[airline, Class]]).toarray().flatten()
-        to_predict = np.hstack((encoded_features,duration, days_left))
-        predicted_price = model.predict([to_predict])[0]
-        predicted_price_json = float(predicted_price)
-        save_prediction(db, flight_features.airline, flight_features.Class, flight_features.duration, flight_features.days_left, predicted_price_json,flight_features.prediction_source)
-        return {"predicted_price": predicted_price_json}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@app.post("/flights/predict-price/csv/")
-async def predict_prices_from_csv(csv_file: UploadFile = File(...), db: Session = Depends(get_db)):
-    try:
-        contents = csv_file.file.read()
-        df = pd.read_csv(io.BytesIO(contents))
-        encoded_feature = encoder.transform(df[['airline','Class']])
-        all_features = np.hstack((encoded_feature.toarray(), df[['duration', 'days_left']].values))
+        df = pd.DataFrame(flight_features)
+        encoded_features = encoder.transform(df[['airline', 'Class']]).toarray()
+        all_features = np.hstack((encoded_features, df[['duration', 'days_left']].values))
         predicted_prices = model.predict(all_features)
         df['predicted_price'] = predicted_prices
-        for _, row in df.iterrows():
-            save_prediction(db, airline=row['airline'], class_=row['Class'], duration=row['duration'], days_left=row['days_left'], predicted_price=row['predicted_price'], source="webapp")
+        save_data = df.to_dict(orient='records')
+        save_prediction(db, save_data)
         return {"predicted_prices": predicted_prices.tolist()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 @app.post("/past-predictions/")
 async def retrieve_past_predictions(request_data: PastPredictionsRequest, db: Session = Depends(get_db)):
