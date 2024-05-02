@@ -1,3 +1,4 @@
+jupyter==1.0.0
 matplotlib==3.8.3
 pandas==2.1.4
 scikit-learn==1.4.1.post1
@@ -10,3 +11,4 @@ python-multipart==0.0.9
 streamlit==1.24.0
 SQLAlchemy==1.4.51
 apache-airflow==2.8.2 --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.8.2/constraints-3.10.txt
+great-expectations==0.18.12
