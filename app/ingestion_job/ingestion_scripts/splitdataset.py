@@ -36,4 +36,3 @@ if __name__ == "__main__":
     raw_data_folder_path = '../../../airflow-spike/data/raw-data'
     num_files = 20
     split_dataset(main_dataset_path, raw_data_folder_path, num_files)
-    #introduce_greater()

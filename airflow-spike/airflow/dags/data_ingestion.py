@@ -30,6 +30,7 @@ EXPECTATIONS_FOLDER = os.path.join(CURRENT_DIR, "..", "..", "..", "gx")
 GOOD_DATA_FOLDER = os.path.join('..', 'data', 'good-data')
 BAD_DATA_FOLDER = os.path.join('..', 'data', 'bad-data')
 
+# Set Airflow variables for good and bad data folders
 Variable.set("GOOD_DATA_FOLDER", GOOD_DATA_FOLDER)
 Variable.set("BAD_DATA_FOLDER", BAD_DATA_FOLDER)
 
@@ -38,13 +39,13 @@ def read_data(**kwargs):
     if files:
         selected_file = random.choice(files)
         file_path = os.path.join(RAW_DATA_FOLDER, selected_file)
-        print("Selected file:", selected_file)  # Add this line for logging
-        print("File path in read_data:", file_path)  # Add this line for logging
+        print("Selected file:", selected_file)  
+        print("File path in read_data:", file_path)  
         kwargs['ti'].xcom_push(key='file_path', value=file_path)
 
 def validate_data(**kwargs):
     file_path = kwargs['ti'].xcom_pull(key='file_path', task_ids='read-data')
-    print("File path in validate_data:", file_path)  # Add this line for logging
+    print("File path in validate_data:", file_path)  
     asset_name = os.path.basename(file_path).split(".")[0]
     print("asset_name is ", asset_name)
     if file_path:
@@ -94,7 +95,7 @@ def send_alerts(**kwargs):
             for index, expectation in enumerate(failed_rows)
         ]
     )
-    
+    # Rebuild the data docs and get the URL
     context = DataContext(context_root_dir=EXPECTATIONS_FOLDER)
     context.build_data_docs()
     data_docs_url = context.get_docs_sites_urls()[0]['site_url']
@@ -136,7 +137,7 @@ def save_data_errors(**kwargs):
         for result in validation_results["results"]
         if not result["success"]
     }
-    
+    # Connect to PostgreSQL database
     db_conn_string = "postgresql://postgres:password@127.0.0.1:5432/FlightPrediction"
     engine = create_engine(db_conn_string)
     metadata = MetaData()
