@@ -1,49 +1,71 @@
+import glob
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
 from datetime import datetime, timedelta
 import pandas as pd
-import requests
 import os
-
+from airflow.exceptions import AirflowSkipException
+from airflow.models import Variable
+from airflow.hooks.http_hook import HttpHook
+import json
 
 GOOD_DATA_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'good-data'))
 
-def check_for_new_data(**kwargs):
-    files = os.listdir(GOOD_DATA_FOLDER)
-    new_files = [file for file in files if file.endswith('.csv')] 
-    if new_files:
-        file_paths = [os.path.join(GOOD_DATA_FOLDER, file) for file in new_files]
-        kwargs['ti'].xcom_push(key='file_paths', value=file_paths)
-    else:
-        raise ValueError("No new files found.")
+def check_for_new_data(ti):
+    good_data_files = glob.glob(os.path.join(GOOD_DATA_FOLDER, '*.csv'))
+    print('Files are', good_data_files)
+    last_processed_time = Variable.get("last_processed_time", default_var=str(datetime.min))
+    print('Last processed time is', last_processed_time)
+
+    new_files = [f for f in good_data_files if datetime.fromtimestamp(os.path.getmtime(f)) > datetime.fromisoformat(last_processed_time)]
+    print('New files are', new_files)
+    if not new_files:
+        print("No new data found, skipping this run.")
+        raise AirflowSkipException("No new data found, skipping this run.")
+
+    ti.xcom_push(key='new_files', value=new_files)
 
 
-def make_predictions(**kwargs):
-    file_paths = kwargs['ti'].xcom_pull(key='file_paths', task_ids='check-for-new-data')
+def make_predictions(ti):
+    new_files = ti.xcom_pull(key='new_files', task_ids='check-for-new-data')
+    if not new_files:
+        print("No new files found. Skipping make_predictions.")
+        return
+
     try:
-        for file in file_paths:
+        input_data_list = []
+        for file in new_files:
             df = pd.read_csv(file)
-            for index, row in df.iterrows():
-                airline = row['airline']
-                Class = row['Class']
-                duration = row['duration']
-                days_left = row['days_left']
-                api_url = "http://127.0.0.1:8000/flights/predict-price/"
-
-                prediction_data = {
-                    "airline": airline,
-                    "Class": Class,
-                    "duration": duration,
-                    "days_left": days_left,
+            for _, row in df.iterrows():
+                flight_features = {
+                    "airline": row['airline'],
+                    "Class": row['Class'],
+                    "duration": row['duration'],
+                    "days_left": row['days_left'],
                     "prediction_source": "scheduled predictions"
                 }
+                input_data_list.append(flight_features)
 
-                response = requests.post(api_url, json=[prediction_data])
+        input_data_json = json.dumps(input_data_list)
 
-                if response.status_code == 200:
-                    print(f"Prediction for {airline} saved successfully!")
-                else:
-                    print(f"Failed to save prediction for {airline}: {response.text}")
+        http_hook = HttpHook(method='POST', http_conn_id="fastapi")
+        
+        response = http_hook.run(
+            endpoint="/flights/predict-price/",
+            data=input_data_json,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        if response.status_code == 200:
+            print("Prediction request successful!")
+            response_data = response.json()
+            print("Response data:", response_data)
+        else:
+            print("Prediction request failed. Status code:", response.status_code)
+            print("Response content:", response.text)
+
+        # Update the last processed time if the request was successful
+        Variable.set("last_processed_time", str(datetime.now()))
 
     except Exception as e:
         print(f"An error occurred while processing prediction: {e}")

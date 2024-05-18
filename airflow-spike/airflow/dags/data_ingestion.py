@@ -1,25 +1,25 @@
-import shutil
-import great_expectations as ge
 import os
 import random
 import pandas as pd
-import sqlalchemy
-import datetime
 import requests
-from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
+import datetime
+import time
+import json
+from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import DateTime
 from airflow.operators.python_operator import PythonOperator
-from datetime import datetime, timedelta
 from airflow import DAG
-from great_expectations.dataset.pandas_dataset import PandasDataset
-from great_expectations.data_context.data_context import DataContext
 from airflow.operators.python import BranchPythonOperator
 from airflow.models import Variable
 from airflow.hooks.base_hook import BaseHook
 from airflow.providers.postgres.operators.postgres import PostgresOperator
 from airflow.models import Connection
 from airflow.settings import Session
+import great_expectations as ge
+from great_expectations.dataset.pandas_dataset import PandasDataset
+from great_expectations.data_context.data_context import DataContext
+from great_expectations.core.batch import BatchRequest
 
 
 
@@ -45,48 +45,31 @@ def read_data(**kwargs):
 def validate_data(**kwargs):
     file_path = kwargs['ti'].xcom_pull(key='file_path', task_ids='read-data')
     print("File path in validate_data:", file_path)  # Add this line for logging
+    asset_name = os.path.basename(file_path).split(".")[0]
+    print("asset_name is ", asset_name)
     if file_path:
         df = pd.read_csv(file_path)
         context = DataContext(context_root_dir=EXPECTATIONS_FOLDER)
-        expectation_suite = context.get_expectation_suite('suite')
+        suite_name = 'suite'
+        expectation_suite = context.get_expectation_suite(suite_name)
         ge_df = PandasDataset(df, expectation_suite=expectation_suite)
         validation_results = ge_df.validate(expectation_suite=expectation_suite)
+        run_id = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        kwargs["ti"].xcom_push(key="run_id", value=run_id)
         kwargs['ti'].xcom_push(key='validation_results', value=validation_results)
-        good_data_rows = []
-        bad_data_rows = []
-        for idx, result in enumerate(validation_results['results']):
-            if result['success']:
-                good_data_rows.append(idx)
-            else:
-                bad_data_rows.append(idx)
         
-        if not bad_data_rows:
-            print(file_path, 'is good data')
-            kwargs['ti'].xcom_push(key='data_quality', value='good_data')
-            good_data_path = os.path.join(Variable.get("GOOD_DATA_FOLDER"), os.path.basename(file_path))
-            df.to_csv(good_data_path, index=False)
-            print("Entire data saved to good data path:", good_data_path)
-        elif not good_data_rows:
-            print(file_path, 'is bad data')
-            kwargs['ti'].xcom_push(key='data_quality', value='bad_data')
-            bad_data_path = os.path.join(Variable.get("BAD_DATA_FOLDER"), os.path.basename(file_path))
-            df.to_csv(bad_data_path, index=False)
-            print("Entire data saved to bad data path:", bad_data_path)
+        if validation_results["success"]:
+            print(file_path, "is good data")
+            kwargs["ti"].xcom_push(key="data_quality", value="good_data")
         else:
-            print("Some rows have data problems. Splitting file into good and bad data.")
-            good_df = df.iloc[good_data_rows]
-            bad_df = df.iloc[bad_data_rows]
-            good_data_path = os.path.join(Variable.get("GOOD_DATA_FOLDER"), os.path.basename(file_path))
-            bad_data_path = os.path.join(Variable.get("BAD_DATA_FOLDER"), os.path.basename(file_path))
-            os.makedirs(os.path.dirname(good_data_path), exist_ok=True)  # Ensure directory exists
-            os.makedirs(os.path.dirname(bad_data_path), exist_ok=True)  # Ensure directory exists
-            good_df.to_csv(good_data_path, index=False)
-            bad_df.to_csv(bad_data_path, index=False)
-            print("Good data saved to:", good_data_path)
-            print("Bad data saved to:", bad_data_path)
-    else:
-        print("File path is None. Unable to validate data.")
+            print(file_path, "is bad data")
+            kwargs["ti"].xcom_push(key="data_quality", value="bad_data")
 
+        context.build_data_docs()
+        data_docs_site = context.get_docs_sites_urls()[0]["site_url"]
+        print(f"Data Docs generated at: {data_docs_site}")
+
+    pass
 
 def decide_which_pathtogo(**kwargs):
     ti = kwargs['ti']
@@ -98,9 +81,20 @@ def decide_which_pathtogo(**kwargs):
 
 def send_alerts(**kwargs):
     validation_results = kwargs['ti'].xcom_pull(key='validation_results', task_ids='validate-data')
+    run_id = kwargs["ti"].xcom_pull(key="run_id", task_ids="validate-data")
     file_path = kwargs['ti'].xcom_pull(key='file_path', task_ids='read-data')
-    total_rows = len(validation_results["results"])
-    failed_rows = len([result for result in validation_results["results"] if not result["success"]])
+    df = pd.read_csv(file_path)
+    
+    failed_rows = [result for result in validation_results["results"] if not result["success"]]
+    total_failed_rows = len(failed_rows)
+    
+    error_summary = os.linesep.join(
+        [
+            f"- Expectation {index + 1}: {expectation['expectation_config']['expectation_type']} failed with {expectation['result'].get('unexpected_count', 'N/A')} unexpected values."
+            for index, expectation in enumerate(failed_rows)
+        ]
+    )
+    
     context = DataContext(context_root_dir=EXPECTATIONS_FOLDER)
     context.build_data_docs()
     data_docs_url = context.get_docs_sites_urls()[0]['site_url']
@@ -108,18 +102,17 @@ def send_alerts(**kwargs):
 
     teams_webhook_url = "https://epitafr.webhook.office.com/webhookb2/2fa20091-4701-4b5d-9ede-c4ccaed1992b@3534b3d7-316c-4bc9-9ede-605c860f49d2/IncomingWebhook/f96d7e6d99ed4719a0197701d450c1a9/c9156a2d-2a28-42a7-88a0-c157f2a03744"
     headers = {'Content-Type': 'application/json'}
-
     data_docs_url = "http://192.168.1.37:8000/local_site/index.html"
 
-    if failed_rows > 5:
+    if total_failed_rows > 5:
         criticality = 'high'
-    elif failed_rows > 3:
+    elif total_failed_rows > 3:
         criticality = 'medium'
     else:
         criticality = 'low'
 
     alert_message = {
-        "text": f"Data Problem Alert:\nCriticality: {criticality}\nSummary: {failed_rows} rows failed validation.\nCheck the detailed report here: {data_docs_url}"
+        "text": f"Data Problem Alert:\nCriticality: {criticality}\nSummary: {total_failed_rows} rows failed validation.\nCheck the detailed report here: {data_docs_url}"
     }
 
     try:
@@ -132,72 +125,102 @@ def send_alerts(**kwargs):
         print(f"Error sending alert to Teams: {e}")
 
 def save_data_errors(**kwargs):
-    session = Session()
-    db_conn = (
-        session.query(Connection)
-        .filter(Connection.conn_id == "postgres_default")
-        .first()
+    file_path = kwargs['ti'].xcom_pull(key='file_path', task_ids='read-data')
+    validation_results = kwargs['ti'].xcom_pull(key='validation_results', task_ids='validate-data')
+    total_rows = len(validation_results["results"])
+    criticality = kwargs["ti"].xcom_pull(key="criticality", task_ids="send-alerts")
+    bad_rows_indices_length = kwargs["ti"].xcom_pull(key="bad_rows_indices_len", task_ids="send-alerts")
+    
+    error_details = {
+        result["expectation_config"]["expectation_type"]: result["result"].get("unexpected_count", "N/A")
+        for result in validation_results["results"]
+        if not result["success"]
+    }
+    
+    db_conn_string = "postgresql://postgres:password@127.0.0.1:5432/FlightPrediction"
+    engine = create_engine(db_conn_string)
+    metadata = MetaData()
+    data_quality_table = Table(
+        'data_quality_report',
+        metadata,
+        Column('id', Integer, primary_key=True, autoincrement=True),
+        Column('total_rows', Integer),
+        Column('failed_rows', Integer),
+        Column('timestamp', DateTime),
+        Column('file_path', String(500)),
+        Column("criticality", String(500)),
+        Column("error_details", JSON),
     )
-    print(db_conn.conn_type)
-    if db_conn and db_conn.conn_type == "postgres":
-        try:
-            engine = create_engine("postgresql://postgres:password@127.0.0.1:5432/FlightPrediction")
-            validation_results = kwargs['ti'].xcom_pull(key='validation_results', task_ids='validate-data')
-            file_path = kwargs['ti'].xcom_pull(key='file_path', task_ids='read-data')
-            total_rows = len(validation_results["results"])
-            failed_rows = len([result for result in validation_results["results"] if not result["success"]])
-
-            with engine.connect() as connection:
-                print("connected to the postgres")
-                metadata = MetaData(bind=engine)
-                data_quality_table = Table(
-                    'data_quality_report',
-                    metadata,
-                    Column('id', Integer, primary_key=True, autoincrement=True),
-                    Column('total_rows', Integer),
-                    Column('failed_rows', Integer),
-                    Column('timestamp', DateTime),
-                    Column('file_path', String(500))
-                )
-                metadata.create_all(engine)
-                insert_query = data_quality_table.insert().values(
-                    total_rows=total_rows,
-                    failed_rows=failed_rows,
-                    timestamp=datetime.datetime.now(),
-                    file_path=file_path,
-                )
-                connection.execute(insert_query)
-                print("Data quality report saved to the database.")
-
-        except SQLAlchemyError as e:
-            print(f"Error saving data quality report to the database: {e}")
+    metadata.create_all(engine)
+    
+    try:
+        with engine.connect() as connection:
+            print("connected to the postgres")            
+            insert_query = data_quality_table.insert().values(
+                total_rows=total_rows,
+                failed_rows=bad_rows_indices_length,
+                timestamp=datetime.datetime.now(),
+                file_path=file_path,
+                criticality=criticality,
+                error_details=json.dumps(error_details),
+            )
+            connection.execute(insert_query)
+            print("Data quality report saved to the database.")
+    except SQLAlchemyError as e:
+        print(f"Error saving data quality report to the database: {e}")
 
 def split_and_save_data(**kwargs):
     ti = kwargs['ti']
     file_path = ti.xcom_pull(key='file_path', task_ids='read-data')
-    data_quality = ti.xcom_pull(key='data_quality', task_ids='validate-data')
-    
-    print("Received file path:", file_path)
-    print("Received data quality:", data_quality)
-
-    if file_path is None:
-        raise ValueError("Received NoneType object as file path.")
-    
-    output_folder = BAD_DATA_FOLDER if data_quality == 'bad_data' else GOOD_DATA_FOLDER
-    os.makedirs(output_folder, exist_ok=True)
+    validation_results = kwargs["ti"].xcom_pull(
+        key="validation_results", task_ids="validate-data"
+    )
     dataframe = pd.read_csv(file_path)
-    output_path = os.path.join(output_folder, os.path.basename(file_path))
-    dataframe.to_csv(output_path, index=False)  
+    bad_rows_indices = set()
+    data_quality = ti.xcom_pull(key='data_quality', task_ids='validate-data')
+    for result in validation_results["results"]:
+        if not result["success"]:
+            if (
+                "partial_unexpected_list" in result["result"]
+                and result["result"]["partial_unexpected_list"]
+            ):
+                '''Assume partial_unexpected_list contains the row indices
+                 (this might need adjustment
+                 based on actual data structure) '''
+                for value in result["result"]["partial_unexpected_list"]:
+                    '''Find all occurrences of this 
+                    unexpected value in the specified column'''
+                    index_list = dataframe.index[
+                        dataframe[result["expectation_config"]["kwargs"]
+                           ["column"]] == value
+                    ].tolist()
+                    bad_rows_indices.update(index_list)
 
+    df_bad = dataframe.iloc[list(bad_rows_indices)]
+    df_good = dataframe.drop(index=list(bad_rows_indices))
+    os.makedirs(GOOD_DATA_FOLDER, exist_ok=True)
+    os.makedirs(BAD_DATA_FOLDER, exist_ok=True)
+    
+    good_file_path = os.path.join(GOOD_DATA_FOLDER, os.path.basename(file_path))
+    bad_file_path = os.path.join(BAD_DATA_FOLDER, os.path.basename(file_path))
+
+    if not df_good.empty:
+        df_good.to_csv(good_file_path, index=False)
+        print(f"Saved good data to {good_file_path}")
+
+    if not df_bad.empty:
+        df_bad.to_csv(bad_file_path, index=False)
+        print(f"Saved bad data to {bad_file_path}")
+
+    os.remove(file_path)
 
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2024, 1, 1),
-    'retries': 1,
+    'start_date': datetime.datetime(2024, 1, 1),
+    'retries': 0,
     'email_on_failure': False,
-    'email_on_retry': False,
-    'retry_delay': timedelta(minutes=5),
+    'email_on_retry': False
 }
 
 dag = DAG(
