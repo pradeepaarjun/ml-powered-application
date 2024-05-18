@@ -6,7 +6,9 @@ This web application built for predicting flight prices based on various feature
 - **Manual Input**: Users can input flight details manually and receive instant price predictions.
 - **Upload CSV**: Users can upload a CSV file containing multiple flight records for batch prediction.
 - **Past Predictions**: View past predictions made by the web app or scheduled prediction jobs.
-
+Prerequisites:
+1)Python 3.10
+2)Conda (or any other virtual environment manager)
 ## Getting started
 
 ### Installation and setup
@@ -55,3 +57,49 @@ models/: Directory containing the trained machine learning models.
 database/: Directory containing database models and CRUD operations.
 
 README.md: Documentation file for the project.
+
+##Airflow Integration
+Apache Airflow is used to orchestrate and schedule batch prediction jobs. Here’s how to set it up and use it in this project.
+
+##Setting Up Airflow
+###Install Airflow:
+Airflow requires several dependencies. It's recommended to use the constraints file provided by the Airflow project:
+
+pip install apache-airflow==2.3.0 --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.3.0/constraints-3.10.txt"
+
+###Initialize Airflow Database:
+airflow db init
+
+###Create an Airflow User:
+```shell
+airflow users create \
+    --username admin \
+    --firstname Admin \
+    --lastname User \
+    --role Admin \
+    --email admin@example.com
+```
+###Start Airflow Services:
+```shell
+airflow webserver --port 8080
+airflow scheduler
+```
+###Access the Airflow UI:
+Open a web browser and go to http://localhost:8080/ to access the Airflow UI.
+
+###Airflow Project Structure
+airflow/dags/: Directory containing Airflow DAGs (Directed Acyclic Graphs) that define the workflow for batch predictions.
+airflow/dag/data_ingestion.py: A DAG that Read, validate against greater expectations, send alerts and save the error report to the postgres
+airflow/dags/predict_new_data_dag.py: A DAG that schedules and runs batch prediction jobs.
+
+
+
+
+
+
+
+
+
+
+
+
